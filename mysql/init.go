@@ -6,5 +6,5 @@ import (
 )
 
 func init() {
-	mysql.RegisterDialContext("mysql+tcp", dial.DialContext)
+	mysql.RegisterDialContext("ssh+tunnel", dial.DialContext)
 }
