@@ -71,9 +71,20 @@ func (c Config) clientKey() clientKey {
 	}
 	return clientKey{
 		Username: c.Username,
+		Password: passKey(c.Password),
 		Host:     c.Host,
 		Port:     port,
 	}
+}
+
+func passKey(password *string) string {
+	if password == nil {
+		return "-"
+	}
+	if *password == "" {
+		return "*"
+	}
+	return "-*" + *password
 }
 
 type sshPooledTunnel struct {

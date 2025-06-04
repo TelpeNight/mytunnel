@@ -12,6 +12,7 @@ type (
 	}
 	clientKey struct {
 		Username string
+		Password string
 		Host     string
 		Port     int
 	}
