@@ -12,7 +12,7 @@ import (
 
 func BenchmarkDialContext(b *testing.B) {
 	useMockSshClient = true
-	critPanic = true
+	clientPoolEntryRace = true
 	mockClosedCount.Store(0)
 
 	var dialCount atomic.Int64
@@ -21,32 +21,21 @@ func BenchmarkDialContext(b *testing.B) {
 		addrs = append(addrs, fmt.Sprintf("user@host%d/my.sock", i))
 	}
 
-	var ctx = context.Background()
 	dial := func() {
 		dialCount.Add(1)
 		smallDelay()
-		addr := addrs[rand.IntN(len(addrs))]
+		ctx, cancel := maybeTimeoutCtx()
+		defer cancel()
+		addr := addrs[rand.N(len(addrs))]
 		con, err := DialContext(ctx, addr)
 		if err != nil {
-			b.Error(err)
+			return
 		}
-		_, err = con.Write([]byte("hello"))
-		if err != nil {
-			b.Error(err)
-		}
+		_, _ = con.Write([]byte("hello"))
 		workDelay()
-		_, err = con.Write([]byte("world"))
-		if err != nil {
-			b.Error(err)
-		}
-		err = con.Close()
-		if err != nil {
-			b.Error(err)
-		}
-		err = con.Close()
-		if err != nil {
-			b.Error(err)
-		}
+		_, _ = con.Write([]byte("world"))
+		_ = con.Close()
+		_ = con.Close()
 	}
 
 	b.RunParallel(func(pb *testing.PB) {
@@ -58,17 +47,29 @@ func BenchmarkDialContext(b *testing.B) {
 	b.Logf("dial count: %d, closed: %d", dialCount.Load(), mockClosedCount.Load())
 }
 
-const delayScale = int64(time.Millisecond)
+func maybeTimeoutCtx() (context.Context, func()) {
+	if rand.IntN(2) == 0 {
+		return context.Background(), func() {}
+	}
+	const (
+		maxTimeout = 100 * time.Microsecond
+		expired    = 10 * time.Microsecond
+	)
+	timeout := rand.N(maxTimeout+expired) - expired
+	return context.WithTimeout(context.Background(), timeout)
+}
+
+const delayScale = time.Millisecond
 
 func smallDelay() {
 	if rand.IntN(2) == 0 {
 		return
 	}
-	dur := time.Duration(rand.Int64N(delayScale))
+	dur := rand.N(delayScale)
 	time.Sleep(dur)
 }
 
 func workDelay() {
-	dur := 5 * time.Duration(rand.Int64N(delayScale))
+	dur := 5 * rand.N(delayScale)
 	time.Sleep(dur)
 }
