@@ -2,7 +2,6 @@ package dial
 
 import (
 	"context"
-	"net"
 	"sync"
 )
 
@@ -23,11 +22,6 @@ type (
 		removed  bool
 		//accessed atomic.Bool
 	}
-	sshClient interface {
-		DialContext(ctx context.Context, net string, addr string) (net.Conn, error)
-		Close() error
-	}
-
 	sshClientCtor = func(ctx context.Context) (sshClient, error)
 )
 

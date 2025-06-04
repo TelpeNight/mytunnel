@@ -111,6 +111,11 @@ func wrapErr(err error) error {
 	return fmt.Errorf("mytunnel/dial: %w", err)
 }
 
+type sshClient interface {
+	DialContext(ctx context.Context, net string, addr string) (net.Conn, error)
+	Close() error
+}
+
 func newSshClient(ctx context.Context, config Config) (sshClient, error) {
 	if useMockSshClient {
 		if err := ctx.Err(); err != nil {
