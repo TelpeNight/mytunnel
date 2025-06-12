@@ -10,19 +10,19 @@ import (
 func TestParseAddr(t *testing.T) {
 	tests := []struct {
 		name    string
-		args    string
+		addr    string
 		want    Config
 		wantErr bool
 	}{
 		{
 			name:    "empty",
-			args:    "",
+			addr:    "",
 			want:    Config{},
 			wantErr: false,
 		},
 		{
 			name: "host",
-			args: "host",
+			addr: "host",
 			want: Config{
 				Host: "host",
 			},
@@ -30,7 +30,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "@ prefix",
-			args: "@host",
+			addr: "@host",
 			want: Config{
 				Host: "host",
 			},
@@ -38,7 +38,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "@ suffix",
-			args: "user@",
+			addr: "user@",
 			want: Config{
 				Username: "user",
 			},
@@ -46,7 +46,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "user host",
-			args: "user@host",
+			addr: "user@host",
 			want: Config{
 				Username: "user",
 				Host:     "host",
@@ -55,7 +55,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "user emptypass host",
-			args: "user:@host",
+			addr: "user:@host",
 			want: Config{
 				Username: "user",
 				Password: pointer.ToString(""),
@@ -65,7 +65,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "no user pass",
-			args: ":pass@host",
+			addr: ":pass@host",
 			want: Config{
 				Password: pointer.ToString("pass"),
 				Host:     "host",
@@ -74,7 +74,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "no user emptypass",
-			args: ":@host",
+			addr: ":@host",
 			want: Config{
 				Password: pointer.ToString(""),
 				Host:     "host",
@@ -83,7 +83,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "user pass host",
-			args: "user:pass@host",
+			addr: "user:pass@host",
 			want: Config{
 				Username: "user",
 				Host:     "host",
@@ -93,7 +93,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "user pass host addr",
-			args: "user:pass@host/my.sock",
+			addr: "user:pass@host/my.sock",
 			want: Config{
 				Username: "user",
 				Host:     "host",
@@ -105,7 +105,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "host empty addr",
-			args: "user:pass@host/",
+			addr: "user:pass@host/",
 			want: Config{
 				Username: "user",
 				Password: pointer.ToString("pass"),
@@ -115,7 +115,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "host port addr",
-			args: "host:23/addr",
+			addr: "host:23/addr",
 			want: Config{
 				Host: "host",
 				Port: 23,
@@ -126,7 +126,7 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "invalid port",
-			args: "host:3a",
+			addr: "host:3a",
 			want: Config{
 				Host: "host:3a",
 			},
@@ -134,22 +134,36 @@ func TestParseAddr(t *testing.T) {
 		},
 		{
 			name: "only port",
-			args: ":33",
+			addr: ":33",
 			want: Config{
 				Port: 33,
 			},
 			wantErr: true,
 		},
+		{
+			name: "tcp",
+			addr: "/127.0.0.1:3305",
+			want: Config{
+				Net:  "tcp",
+				Addr: "127.0.0.1:3305",
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseAddr(tt.args)
+			got, err := ParseAddr(tt.addr)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("ParseAddr() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseAddr() got = %v, want %v", got, tt.want)
+			}
+			if err == nil {
+				if tt.addr != got.String() {
+					t.Errorf("Config.String() = %v, want %v", got.String(), tt.addr)
+				}
 			}
 		})
 	}

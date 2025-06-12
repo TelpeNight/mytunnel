@@ -25,8 +25,6 @@ Everything inside `ssh+tunnel(...)` will be passed to `dial.DialContext`.
 
 ### Current restrictions
 
-* Works only with unix sockets. TCP supported may be added easy
-* Requires a full path to the socket. Driver default values are not supported
 * Supports only `~/.ssh/id_rsa` and password authentications
 * Requires host to be already added to `~/.ssh/known_hosts`
 * No ENV variables to customize yet

@@ -49,6 +49,20 @@ func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	return nil, wrapErr(lastErr)
 }
 
+func (c Config) canDial() error {
+	var errs []error
+	if c.Username == "" {
+		errs = append(errs, ErrUserRequired)
+	}
+	if c.Host == "" {
+		errs = append(errs, ErrHostRequired)
+	}
+	if c.Net == "" || c.Addr == "" {
+		errs = append(errs, ErrAddrRequired)
+	}
+	return errors.Join(errs...)
+}
+
 var clientPool = &sshClientPool{
 	m: make(map[clientKey]*clientPoolEntry),
 }
@@ -182,6 +196,14 @@ func newSshClient(ctx context.Context, config Config) (sshClient, error) {
 	}
 
 	return client, nil
+}
+
+func (c Config) sshAddr() string {
+	port := c.Port
+	if port == 0 {
+		port = DefaultPort
+	}
+	return fmt.Sprintf("%s:%d", c.Host, port)
 }
 
 func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {

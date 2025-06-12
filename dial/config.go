@@ -3,6 +3,8 @@ package dial
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -16,29 +18,31 @@ type Config struct {
 	Addr     string
 }
 
-func (c Config) canDial() error {
-	var errs []error
-	if c.Username == "" {
-		errs = append(errs, ErrUserRequired)
-	}
-	if c.Host == "" {
-		errs = append(errs, ErrHostRequired)
-	}
-	if c.Net == "" || c.Addr == "" {
-		errs = append(errs, ErrAddrRequired)
-	}
-	return errors.Join(errs...)
-}
-
-func (c Config) sshAddr() string {
-	port := c.Port
-	if port == 0 {
-		port = DefaultPort
-	}
-	return fmt.Sprintf("%s:%d", c.Host, port)
-}
-
 const DefaultPort = 22
+
+func (c Config) String() string {
+	var builder strings.Builder
+	builder.WriteString(c.Username)
+	if c.Password != nil {
+		builder.WriteByte(':')
+		builder.WriteString(*c.Password)
+	}
+	if builder.Len() > 0 {
+		builder.WriteByte('@')
+	}
+	builder.WriteString(c.Host)
+	if c.Port != 0 {
+		builder.WriteByte(':')
+		builder.WriteString(strconv.Itoa(c.Port))
+	}
+	if c.Addr != "" {
+		if c.Addr[0] != '/' {
+			builder.WriteByte('/')
+		}
+		builder.WriteString(c.Addr)
+	}
+	return builder.String()
+}
 
 var (
 	ErrUserRequired = errors.New("username is required")
@@ -82,11 +86,7 @@ func ParseAddr(addr string) (Config, error) {
 	if hasNetAddr && (netAddr == "" || netAddr == "/") {
 		errs = append(errs, ErrAddrRequired)
 	} else if netAddr != "" {
-		var netErr error
-		result.Net, result.Addr, netErr = getAddrNet(netAddr)
-		if netErr != nil {
-			errs = append(errs, netErr)
-		}
+		result.Net, result.Addr = getAddrNet(netAddr)
 	}
 
 	return result, wrapErr(errors.Join(errs...))
@@ -121,6 +121,17 @@ func parseHostPort(host string) (string, int, error) {
 	}
 }
 
-func getAddrNet(addr string) (string, string, error) {
-	return "unix", "/" + addr, nil
+func getAddrNet(addr string) (string, string) {
+	host, _, errHostPort := net.SplitHostPort(addr)
+	if errHostPort == nil {
+		_, errIpAddr := netip.ParseAddr(host)
+		if errIpAddr == nil {
+			return "tcp", addr
+		}
+	}
+	_, errIpAddr := netip.ParseAddr(addr)
+	if errIpAddr == nil {
+		return "tcp", addr
+	}
+	return "unix", "/" + addr
 }
