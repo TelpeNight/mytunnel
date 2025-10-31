@@ -32,13 +32,13 @@ func Test_normalizeAdd(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := normalizeAdd(tt.addr)
+			got, err := normalizeAddr(tt.addr)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("normalizeAdd() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("normalizeAddr() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if got != tt.want {
-				t.Errorf("normalizeAdd() got = %v, want %v", got, tt.want)
+				t.Errorf("normalizeAddr() got = %v, want %v", got, tt.want)
 			}
 		})
 	}

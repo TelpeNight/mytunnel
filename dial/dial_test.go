@@ -12,7 +12,6 @@ import (
 
 func BenchmarkDialContext(b *testing.B) {
 	useMockSshClient = true
-	clientPoolEntryRace = true
 	mockClosedCount.Store(0)
 
 	var dialCount atomic.Int64

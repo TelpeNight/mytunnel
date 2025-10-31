@@ -13,14 +13,14 @@ func init() {
 }
 
 func dialContext(ctx context.Context, addr string) (net.Conn, error) {
-	normalized, err := normalizeAdd(addr)
+	normalized, err := normalizeAddr(addr)
 	if err != nil {
 		return nil, err
 	}
 	return dial.DialContext(ctx, normalized)
 }
 
-func normalizeAdd(addr string) (string, error) {
+func normalizeAddr(addr string) (string, error) {
 	config, err := dial.ParseAddr(addr)
 	if err != nil {
 		return "", err

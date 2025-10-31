@@ -18,15 +18,21 @@ type (
 	}
 	clientPoolEntry struct {
 		done     chan struct{}
-		val      sshClient
+		val      *sshPooledTunnel
 		refCount int64
 		removed  bool
 		//accessed atomic.Bool
 	}
+	sshPooledTunnel struct {
+		client        sshClient
+		pool          *sshClientPool
+		key           clientKey
+		keepAliveOnce sync.Once
+	}
 	sshClientCtor = func(ctx context.Context) (sshClient, error)
 )
 
-func (p *sshClientPool) acquire(ctx context.Context, key clientKey, ctor sshClientCtor) (sshClient, error) {
+func (p *sshClientPool) acquire(ctx context.Context, key clientKey, ctor sshClientCtor) (*sshPooledTunnel, error) {
 	for {
 		p.mu.Lock()
 		if e, has := p.m[key]; has {
@@ -48,8 +54,7 @@ func (p *sshClientPool) acquire(ctx context.Context, key clientKey, ctor sshClie
 		p.m[key] = e // !has, so this is the unique e by key
 		p.mu.Unlock()
 
-		var err error
-		e.val, err = ctor(ctx)
+		client, err := ctor(ctx)
 
 		// no need to lock here
 		// e is synchronized with done
@@ -57,12 +62,21 @@ func (p *sshClientPool) acquire(ctx context.Context, key clientKey, ctor sshClie
 		// and e fields are accessed in wait after done
 		e.startAccess()
 		if err == nil {
+
+			e.val = &sshPooledTunnel{
+				client: client,
+				pool:   p,
+				key:    key,
+			}
 			e.refCount++
+
 		} else {
+
 			e.removed = true
 			p.mu.Lock()
 			delete(p.m, key)
 			p.mu.Unlock()
+
 		}
 		e.endAccess()
 
@@ -73,7 +87,7 @@ func (p *sshClientPool) acquire(ctx context.Context, key clientKey, ctor sshClie
 	}
 }
 
-func (e *clientPoolEntry) wait(ctx context.Context, mu *sync.Mutex) (_ sshClient, _ error, retry bool) {
+func (e *clientPoolEntry) wait(ctx context.Context, mu *sync.Mutex) (_ *sshPooledTunnel, _ error, retry bool) {
 	if err := ctx.Err(); err != nil {
 		return nil, err, false
 	}
@@ -106,22 +120,26 @@ func (e *clientPoolEntry) endAccess() {
 	//e.accessed.Store(false)
 }
 
-func (p *sshClientPool) release(key clientKey, value sshClient) error {
-	last := p.tryRelease(key, value)
+func (p *sshClientPool) release(value *sshPooledTunnel) error {
+	last := p.tryRelease(value)
 	if last {
-		return value.Close()
+		return value.client.Close()
 	}
 	return nil
 }
 
-func (p *sshClientPool) tryRelease(key clientKey, value sshClient) bool {
+func (p *sshClientPool) tryRelease(value *sshPooledTunnel) bool {
+	if value == nil {
+		panic("mytunnel/dial: tryRelease: value is nil")
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	e, has := p.m[key]
+	e, has := p.m[value.key]
 	if !has || e.val != value {
 		// ok, maybe value was forgotten and relaced in pool
-		return false
+		return true
 	}
 
 	e.startAccess()
@@ -133,20 +151,24 @@ func (p *sshClientPool) tryRelease(key clientKey, value sshClient) bool {
 	}
 
 	e.removed = true
-	delete(p.m, key)
+	delete(p.m, value.key)
 	return true
 }
 
-func (p *sshClientPool) forget(key clientKey, value sshClient) {
-	p.tryForget(key, value)
-	_ = value.Close()
+func (p *sshClientPool) forget(value *sshPooledTunnel) {
+	p.tryForget(value)
+	_ = value.client.Close()
 }
 
-func (p *sshClientPool) tryForget(key clientKey, value sshClient) {
+func (p *sshClientPool) tryForget(value *sshPooledTunnel) {
+	if value == nil {
+		panic("mytunnel/dial: tryRelease: value is nil")
+	}
+
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	e, has := p.m[key]
+	e, has := p.m[value.key]
 	if !has || e.val != value {
 		// ok, maybe value was forgotten and relaced in pool
 		return
@@ -156,6 +178,14 @@ func (p *sshClientPool) tryForget(key clientKey, value sshClient) {
 	defer e.endAccess()
 
 	e.removed = true
-	delete(p.m, key)
+	delete(p.m, value.key)
 	return
+}
+
+func (t *sshPooledTunnel) release() error {
+	return t.pool.release(t)
+}
+
+func (t *sshPooledTunnel) forget() {
+	t.pool.forget(t)
 }

@@ -15,21 +15,29 @@ var (
 	mockClosedCount  atomic.Uint64
 )
 
-func newMochSshClient() sshClient {
-	return &mochSshClient{}
+func newMockSshClient() *mockSshClient {
+	return &mockSshClient{}
 }
 
 type (
-	mochSshClient struct {
+	mockSshClient struct {
 		closed atomic.Bool
 	}
 	mochNetCon struct {
-		parent *mochSshClient
+		parent *mockSshClient
 		closed atomic.Bool
 	}
 )
 
-func (m *mochSshClient) DialContext(ctx context.Context, net string, addr string) (net.Conn, error) {
+func (m *mockSshClient) Wait() error {
+	return nil
+}
+
+func (m *mockSshClient) SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error) {
+	return false, nil, nil
+}
+
+func (m *mockSshClient) DialContext(ctx context.Context, net string, addr string) (net.Conn, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -39,7 +47,7 @@ func (m *mochSshClient) DialContext(ctx context.Context, net string, addr string
 	return &mochNetCon{parent: m}, nil
 }
 
-func (m *mochSshClient) Close() error {
+func (m *mockSshClient) Close() error {
 	m.closed.Store(true)
 	mockClosedCount.Add(1)
 	return nil

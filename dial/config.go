@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Config struct {
@@ -16,32 +18,37 @@ type Config struct {
 	Port     int
 	Net      string
 	Addr     string
+	Params   url.Values
 }
 
 const DefaultPort = 22
 
 func (c Config) String() string {
-	var builder strings.Builder
-	builder.WriteString(c.Username)
+	var builder = make([]string, 0, 11)
+	if c.Username != "" {
+		builder = append(builder, c.Username)
+	}
 	if c.Password != nil {
-		builder.WriteByte(':')
-		builder.WriteString(*c.Password)
+		builder = append(builder, ":", *c.Password)
 	}
-	if builder.Len() > 0 {
-		builder.WriteByte('@')
+	if len(builder) > 0 {
+		builder = append(builder, "@")
 	}
-	builder.WriteString(c.Host)
+	builder = append(builder, c.Host)
 	if c.Port != 0 {
-		builder.WriteByte(':')
-		builder.WriteString(strconv.Itoa(c.Port))
+		builder = append(builder, ":", strconv.Itoa(c.Port))
 	}
 	if c.Addr != "" {
 		if c.Addr[0] != '/' {
-			builder.WriteByte('/')
+			builder = append(builder, "/")
 		}
-		builder.WriteString(c.Addr)
+		builder = append(builder, c.Addr)
 	}
-	return builder.String()
+	if len(c.Params) > 0 {
+		builder = append(builder, "?")
+		builder = append(builder, c.Params.Encode())
+	}
+	return strings.Join(builder, "")
 }
 
 var (
@@ -57,15 +64,14 @@ func ParseAddr(addr string) (Config, error) {
 	}
 
 	addr = strings.ReplaceAll(addr, "(a)", "@")
-	userinfo, url, hasUserInfo := strings.Cut(addr, "@")
+	userinfo, url_, hasUserInfo := strings.Cut(addr, "@")
 	if !hasUserInfo {
-		url = addr
+		url_ = addr
 	}
-	hostPort, netAddr, hasNetAddr := strings.Cut(url, "/")
 
 	var errs []error
 	if hasUserInfo {
-		if url == "" {
+		if url_ == "" {
 			errs = append(errs, ErrHostRequired)
 		}
 		var userInfoErr error
@@ -75,6 +81,7 @@ func ParseAddr(addr string) (Config, error) {
 		}
 	}
 
+	hostPort, netAddrWithParams, hasSlash := strings.Cut(url_, "/")
 	if hostPort != "" {
 		var hostPortErr error
 		result.Host, result.Port, hostPortErr = parseHostPort(hostPort)
@@ -83,13 +90,38 @@ func ParseAddr(addr string) (Config, error) {
 		}
 	}
 
-	if hasNetAddr && (netAddr == "" || netAddr == "/") {
-		errs = append(errs, ErrAddrRequired)
-	} else if netAddr != "" {
-		result.Net, result.Addr = getAddrNet(netAddr)
+	if hasSlash {
+		netAddr := netAddrWithParams
+		params := ""
+		paramStart := strings.LastIndex(netAddrWithParams, "?")
+		if paramStart >= 0 {
+			netAddr, params = netAddrWithParams[:paramStart], netAddrWithParams[paramStart+1:]
+		}
+
+		if strings.TrimFunc(netAddr, pathSepAndSpace) == "" {
+			errs = append(errs, ErrAddrRequired)
+		} else {
+			result.Net, result.Addr = getAddrNet(netAddr)
+		}
+
+		if params != "" {
+			var paramsErr error
+			result.Params, paramsErr = url.ParseQuery(params)
+			if paramsErr != nil {
+				errs = append(errs, paramsErr)
+			}
+		}
 	}
 
 	return result, wrapErr(errors.Join(errs...))
+}
+
+func pathSepAndSpace(r rune) bool {
+	switch r {
+	case '/', '\\':
+		return true
+	}
+	return unicode.IsSpace(r)
 }
 
 func parseUserInfo(userinfo string) (string, *string, error) {
