@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"golang.org/x/crypto/ssh"
 	kh "golang.org/x/crypto/ssh/knownhosts"
@@ -23,32 +22,20 @@ func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, wrapErr(err)
 	}
 
-	const dialAttempts = 2
-	var lastErr error
-	for range dialAttempts {
-		sshTun, err := getSshTunnel(ctx, config)
-		if err != nil {
-			return nil, wrapErr(err)
-		}
-
-		tunConn, err := sshTun.client.DialContext(ctx, config.Net, config.Addr)
-		if err != nil {
-			if errors.Is(err, ctx.Err()) {
-				_ = sshTun.release()
-				return nil, err
-			}
-			// if the tunnel fails to dial, count it as invalid
-			// close it and start over
-			lastErr = err
-			sshTun.forget()
-			continue
-		}
-
-		sshTun.keepAlive(config.Params)
-		return &tunnelConn{Conn: tunConn, tunnel: sshTun}, nil
+	kaConfig := makeKeepAliveConfig(config.Params)
+	cli, err := newSshClient(ctx, config, kaConfig.keepAlive())
+	if err != nil {
+		return nil, wrapErr(err)
 	}
 
-	return nil, wrapErr(lastErr)
+	conn, err := cli.DialContext(ctx, config.Net, config.Addr)
+	if err != nil {
+		_ = cli.Close()
+		return nil, wrapErr(err)
+	}
+
+	keepAlive(cli, kaConfig)
+	return &clientConn{Conn: conn, cli: cli}, nil
 }
 
 func (c Config) canDial() error {
@@ -65,53 +52,13 @@ func (c Config) canDial() error {
 	return errors.Join(errs...)
 }
 
-var clientPool = &sshClientPool{
-	m: make(map[clientKey]*clientPoolEntry),
-}
-
-func getSshTunnel(ctx context.Context, config Config) (*sshPooledTunnel, error) {
-	key := config.clientKey()
-	return clientPool.acquire(ctx, key, func(ctx context.Context) (sshClient, error) {
-		return newSshClient(ctx, config)
-	})
-}
-
-func (c Config) clientKey() clientKey {
-	port := c.Port
-	if port == 0 {
-		port = DefaultPort
-	}
-	return clientKey{
-		Username: c.Username,
-		Password: passKey(c.Password),
-		Host:     c.Host,
-		Port:     port,
-	}
-}
-
-func passKey(password *string) string {
-	if password == nil {
-		return "-"
-	}
-	if *password == "" {
-		return "*"
-	}
-	return "-*" + *password
-}
-
-type tunnelConn struct {
+type clientConn struct {
 	net.Conn
-	tunnel    *sshPooledTunnel
-	closeOnce sync.Once
-	closeErr  error
+	cli io.Closer
 }
 
-func (t *tunnelConn) Close() error {
-	err1 := t.Conn.Close()
-	t.closeOnce.Do(func() {
-		t.closeErr = t.tunnel.release()
-	})
-	return errors.Join(err1, t.closeErr)
+func (t *clientConn) Close() error {
+	return errors.Join(t.Conn.Close(), t.cli.Close())
 }
 
 func wrapErr(err error) error {
@@ -126,9 +73,19 @@ type sshClient interface {
 	SendRequest(name string, wantReply bool, payload []byte) (bool, []byte, error)
 	Close() error
 	Wait() error
+	successfulRead() <-chan struct{}
 }
 
-func newSshClient(ctx context.Context, config Config) (sshClient, error) {
+type sshClientConn struct {
+	*ssh.Client
+	conn *netConn
+}
+
+func (c *sshClientConn) successfulRead() <-chan struct{} {
+	return c.conn.readCh
+}
+
+func newSshClient(ctx context.Context, config Config, keepAlive bool) (sshClient, error) {
 	if useMockSshClient {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -177,7 +134,7 @@ func newSshClient(ctx context.Context, config Config) (sshClient, error) {
 	}
 
 	// Connect to the SSH Server
-	client, _, err := sshDialCtx(ctx, config.sshAddr(), sshConfig)
+	client, err := sshDialCtx(ctx, config.sshAddr(), sshConfig, keepAlive)
 	if err != nil {
 		return nil, err
 	}
@@ -193,21 +150,33 @@ func (c Config) sshAddr() string {
 	return fmt.Sprintf("%s:%d", c.Host, port)
 }
 
-func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Client, *netConn, error) {
+func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig, keepAlive bool) (*sshClientConn, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
+
+	d := net.Dialer{
+		KeepAliveConfig: net.KeepAliveConfig{Enable: true},
+	}
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	nConn := &netConn{Conn: conn}
+	if keepAlive {
+		nConn.readCh = make(chan struct{}, 1)
+	}
+	nConn.onOpen()
 
 	type clientErr struct {
 		client *ssh.Client
-		conn   *netConn
 		err    error
 	}
-	dialDone := make(chan clientErr)
+	clientDone := make(chan clientErr)
 	go func() {
-		client, conn, err := sshDial(ctx, addr, config)
+		client, err := sshNewClient(nConn, addr, config)
 		select {
-		case dialDone <- clientErr{client, conn, err}:
+		case clientDone <- clientErr{client, err}:
 		case <-ctx.Done():
 			if client != nil {
 				_ = client.Close()
@@ -217,29 +186,24 @@ func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig) (*ss
 
 	select {
 	case <-ctx.Done():
-		return nil, nil, ctx.Err()
-	case res := <-dialDone:
-		return res.client, res.conn, res.err
+		_ = nConn.Close()
+		return nil, ctx.Err()
+	case res := <-clientDone:
+		if res.err != nil {
+			nConn.onFail(err)
+			_ = nConn.Close()
+			return nil, res.err
+		}
+		return &sshClientConn{res.client, nConn}, nil
 	}
 }
 
-func sshDial(ctx context.Context, addr string, config *ssh.ClientConfig) (*ssh.Client, *netConn, error) {
-	d := net.Dialer{}
-	conn, err := d.DialContext(ctx, "tcp", addr)
-	if err != nil {
-		return nil, nil, err
-	}
-	if tcp, is := conn.(*net.TCPConn); is {
-		errKa := tcp.SetKeepAlive(true)
-		if errKa != nil {
-			slog.WarnContext(ctx, "mytunnel/dial: cannot set keep alive", "addr", addr, "err", errKa.Error())
-		}
-	}
-	nConn := &netConn{Conn: conn}
-	c, chans, reqs, err := ssh.NewClientConn(nConn, addr, config)
+func sshNewClient(conn net.Conn, addr string, config *ssh.ClientConfig) (*ssh.Client, error) {
+	// conn will be closed on <-ctx.Done()
+	c, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
 		// conn is closed on error
-		return nil, nil, err
+		return nil, err
 	}
-	return ssh.NewClient(c, chans, reqs), nConn, nil
+	return ssh.NewClient(c, chans, reqs), nil
 }

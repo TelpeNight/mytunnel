@@ -29,6 +29,10 @@ type (
 	}
 )
 
+func (m *mockSshClient) successfulRead() <-chan struct{} {
+	return nil
+}
+
 func (m *mockSshClient) Wait() error {
 	return nil
 }
