@@ -6,12 +6,17 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 	kh "golang.org/x/crypto/ssh/knownhosts"
 )
+
+var clientPool = newClientPool()
 
 func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	config, err := ParseAddr(addr)
@@ -23,6 +28,31 @@ func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	}
 
 	kaConfig := makeKeepAliveConfig(config.Params)
+	if useConnMux(config.Params) {
+		return newMuxConn(ctx, config, kaConfig)
+	}
+	return newClientConn(ctx, config, kaConfig)
+}
+
+func useConnMux(params url.Values) bool {
+	vals := params["ConnMux"]
+	switch len(vals) {
+	case 0:
+		return true
+	case 1:
+	default:
+		logger().Warn("mytunne/dial: multiple values for ConnMux, ignore")
+		return true
+	}
+	val, err := strconv.ParseBool(vals[0])
+	if err != nil {
+		logger().Warn("mytunne/dial: invalid value for ConnMux, ignore", "err", err)
+		return true
+	}
+	return val
+}
+
+func newClientConn(ctx context.Context, config Config, kaConfig keepAliveConfig) (net.Conn, error) {
 	cli, err := newSshClient(ctx, config, kaConfig.keepAlive())
 	if err != nil {
 		return nil, wrapErr(err)
@@ -34,8 +64,46 @@ func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, wrapErr(err)
 	}
 
-	keepAlive(cli, kaConfig)
+	if kaConfig.keepAlive() {
+		keepAlive(cli, kaConfig)
+	}
 	return &clientConn{Conn: conn, cli: cli}, nil
+}
+
+func newMuxConn(ctx context.Context, config Config, kaConfig keepAliveConfig) (net.Conn, error) {
+	var (
+		ka      = kaConfig.keepAlive()
+		lastErr error
+	)
+	for range 2 {
+		tunn, err := clientPool.acquire(ctx, config.clientKey(kaConfig),
+			func(ctx context.Context) (sshClient, error) {
+				return newSshClient(ctx, config, ka)
+			},
+		)
+		if err != nil {
+			return nil, wrapErr(err)
+		}
+
+		conn, err := tunn.client.DialContext(ctx, config.Net, config.Addr)
+		if err != nil {
+			// if client can't dial - it is invalid
+			// forget it and start over
+			// all other connections, multiplexed by this client, will be closed
+			tunn.forget()
+			lastErr = err
+			continue
+		}
+
+		if ka {
+			tunn.keepAliveOnce.Do(func() {
+				keepAlive(tunn.client, kaConfig)
+			})
+		}
+
+		return &muxClientConn{Conn: conn, tunn: tunn}, nil
+	}
+	return nil, wrapErr(lastErr)
 }
 
 func (c Config) canDial() error {
@@ -59,6 +127,21 @@ type clientConn struct {
 
 func (t *clientConn) Close() error {
 	return errors.Join(t.Conn.Close(), t.cli.Close())
+}
+
+type muxClientConn struct {
+	net.Conn
+	tunn  *sshPooledTunnel
+	close sync.Once
+}
+
+func (t *muxClientConn) Close() error {
+	var connErr = t.Conn.Close()
+	var tunnErr error
+	t.close.Do(func() {
+		tunnErr = t.tunn.release()
+	})
+	return errors.Join(connErr, tunnErr)
 }
 
 func wrapErr(err error) error {

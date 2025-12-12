@@ -69,9 +69,7 @@ func kaParse[Int intType](key string, vals []string, units Int) Int {
 }
 
 func keepAlive(cli sshClient, config keepAliveConfig) {
-	if config.keepAlive() {
-		go keepAliveLoop(cli, config)
-	}
+	go keepAliveLoop(cli, config)
 }
 
 type keepAliveConfig struct {
