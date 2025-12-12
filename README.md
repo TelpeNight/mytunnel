@@ -16,8 +16,8 @@ Default port is `22`
 
 ### Params
 
-`ServerAliveInterval` and `ServerAliveCountMax` mimics [default OpenSSH behavior](https://man.openbsd.org/ssh_config#ServerAliveCountMax).
-It is recommented to set this value, if you sometimes get SQL error, caused by dead connections in the pool.
+`ServerAliveInterval` and `ServerAliveCountMax` mimic [default OpenSSH behavior](https://man.openbsd.org/ssh_config#ServerAliveCountMax).
+It is recommented to set these values, if you sometimes get SQL error, caused by dead connections in the pool.
 
 `ServerAliveTimeout` - extra param, that sets keep alive request timeout. By default, equals to `ServerAliveInterval`.
 Prefer to set it to maximum latency you expect for alive connection in you environment.
