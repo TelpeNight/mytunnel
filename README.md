@@ -44,6 +44,6 @@ Everything inside `ssh+tunnel(...)` will be passed to `dial.DialContext`.
 
 ### Current restrictions
 
-* Supports only `~/.ssh/id_rsa` and password authentications
+* Supports only `~/.ssh/id_*` and password authentications. SSH_AUTH_SOCK auth is experimental
 * Requires host to be already added to `~/.ssh/known_hosts`
 * No ENV variables to customize yet

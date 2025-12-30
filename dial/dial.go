@@ -184,41 +184,26 @@ func newSshClient(ctx context.Context, config Config, keepAlive bool) (sshClient
 	if err != nil {
 		return nil, err
 	}
-	// The client configuration with configuration option to use the ssh-agent
-	sshConfig := &ssh.ClientConfig{
-		User:            config.Username,
-		HostKeyCallback: hostKeyCallback,
-	}
 
-	// Try local private key
-	if privateKey, err := os.ReadFile(filepath.Join(home, ".ssh/id_rsa")); err == nil {
-		signer, err := ssh.ParsePrivateKey(privateKey)
-		if err != nil {
-			return nil, err
+	var (
+		sshConfig = &ssh.ClientConfig{
+			User:            config.Username,
+			HostKeyCallback: hostKeyCallback,
 		}
-		sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeys(signer))
-	} else if !os.IsNotExist(err) {
-		return nil, err
-	} /*else if conn, err := net.Dial("unix", os.Getenv("SSH_AUTH_SOCK")); err == nil {
-		// When the agentClient connection succeeded, add them as AuthMethod
-		// Establish a connection to the local ssh-agent
-		defer conn.Close()
-
-		// Create a new instance of the ssh agent
-		agentClient := agent.NewClient(conn)
-		sshConfig.Auth = append(sshConfig.Auth, ssh.PublicKeysCallback(agentClient.Signers))
-	}*/
-
-	// When there's a non empty password add the password AuthMethod
-	if config.Password != nil {
-		sshConfig.Auth = append(sshConfig.Auth, ssh.PasswordCallback(func() (string, error) {
-			return *config.Password, nil
-		}))
+		authDone       func()
+		authMethodsErr error
+	)
+	sshConfig.Auth, authDone, authMethodsErr = makeSshAuth(ctx, home, config)
+	if authDone != nil {
+		defer authDone()
 	}
 
 	// Connect to the SSH Server
 	client, err := sshDialCtx(ctx, config.sshAddr(), sshConfig, keepAlive)
 	if err != nil {
+		if authMethodsErr != nil {
+			err = fmt.Errorf("%w; errors in auth process: %s", err, authMethodsErr)
+		}
 		return nil, err
 	}
 
@@ -269,14 +254,18 @@ func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig, keep
 
 	select {
 	case <-ctx.Done():
+
 		_ = nConn.Close()
 		return nil, ctx.Err()
+
 	case res := <-clientDone:
+
 		if res.err != nil {
 			nConn.onFail(err)
 			_ = nConn.Close()
 			return nil, res.err
 		}
+
 		return &sshClientConn{res.client, nConn}, nil
 	}
 }
