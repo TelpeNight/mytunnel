@@ -272,7 +272,7 @@ func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig, keep
 	case res := <-clientDone:
 
 		if res.err != nil {
-			nConn.onFail(err)
+			nConn.onFail(res.err)
 			_ = nConn.Close()
 			return nil, res.err
 		}
