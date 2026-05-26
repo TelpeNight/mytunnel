@@ -1,49 +1,88 @@
 # mytunnel
 
-A simple way to dial through ssh. Supports **mysql** from the box. Just
+[![Go Reference](https://pkg.go.dev/badge/github.com/TelpeNight/mytunnel.svg)](https://pkg.go.dev/github.com/TelpeNight/mytunnel)
+[![Go](https://github.com/TelpeNight/mytunnel/actions/workflows/go.yml/badge.svg)](https://github.com/TelpeNight/mytunnel/actions/workflows/go.yml)
+![GitHub Tag](https://img.shields.io/github/v/tag/TelpeNight/mytunnel)
+[![Go Report Card](https://goreportcard.com/badge/github.com/TelpeNight/mytunnel)](https://goreportcard.com/report/github.com/TelpeNight/mytunnel)
+![GitHub License](https://img.shields.io/github/license/TelpeNight/mytunnel)
+
+Dial any network address through an SSH tunnel. Built-in MySQL support.
+
+## Install
+
+```
+go get github.com/TelpeNight/mytunnel
+```
+
+## Usage
+
+### Direct dial
+
+```go
+import "github.com/TelpeNight/mytunnel/dial"
+
+conn, err := dial.DialContext(ctx, "alice@bastion.example.com/var/run/app.sock")
+```
+
+`DialContext` returns a `net.Conn` ready for use. By default, a pooled SSH
+client is reused across concurrent calls to the same server — equivalent to
+opening a persistent tunnel and multiplexing connections over it.
+
+### MySQL
 
 ```go
 import _ "github.com/TelpeNight/mytunnel/mysql"
 ```
 
-### Dial address
+This registers the `ssh+tunnel` network with go-mysql-driver. Example DSN:
 
-`username[:password]@example.com[:port]/path/to/unix.sock[?params...]`
+```
+db_user:db_pass@ssh+tunnel(ssh_user(a)bastion.example.com/tmp/mysql.sock?ServerAliveInterval=10)/mydb
+```
 
-Default port is `22`
+Everything inside `ssh+tunnel(...)` is the tunnel address passed to
+`dial.DialContext`. Use `(a)` in place of `@` inside the tunnel address —
+the MySQL DSN parser treats bare `@` as a delimiter.
 
-`@` can be replaced with `(a)` (see below)
+## Address format
 
-### Params
+```
+[username[:password]@]host[:port][/destination][?params]
+```
 
-`ServerAliveInterval` and `ServerAliveCountMax` mimic [default OpenSSH behavior](https://man.openbsd.org/ssh_config#ServerAliveCountMax).
-It is recommented to set these values, if you sometimes get SQL error, caused by dead connections in the pool.
+| Part | Description |
+|---|---|
+| `username` | SSH login name |
+| `password` | SSH password (omit to use public-key auth only) |
+| `host` | SSH server hostname or IP address |
+| `port` | SSH server port (default: `22`) |
+| `/destination` | Where to connect on the remote host. A `host:port` string or bare IP uses TCP; anything else is a Unix socket path. |
+| `?params` | Optional query parameters (see below) |
 
-`ServerAliveTimeout` - an extra param, that sets keep alive request timeout. By default, equals to `ServerAliveInterval`.
-Prefer to set it to the maximum latency expected in your environment.
+`(a)` may be used in place of `@` anywhere in the address.
 
-`ServerAliveLagMax`. While debugging, you can get ServerAliveTimeouts, caused by debugger pauses.
-To prevent this, we check if `time.Since(start) >= ServerAliveTimeout+ServerAliveLagMax`. In this case timeout would be skipped.
-Default value is 2s.
+## Parameters
 
-`ConnMux`. By default, the library uses ssh client pool. One client can multiplex several connections.
-This is equivalent to default behavior, when you open an ssh tunnel between local and remote sockets and establish several connection to a local one.
-This can support big number of simultaneous connections to a remote socket.
-But note that in this case client ↔ server connection is a single TCP socket, which can limit throughput.
-By setting `ConnMux` to false, you can enable a new client ↔ server TCP connection per a Dial call. But in this scenario, a remote ssh server may support limited number of simultaneous connections.
-You may want to `SetMaxOpenConns` on you DB to match your remote server limits. Otherwise, you may get ssh handshake errors with large connection pool.  
+### Keep-alive
 
-### Mysql
+Setting these is recommended if you sometimes get SQL errors caused by stale
+connections in the pool. `ServerAliveInterval` and `ServerAliveCountMax` mimic
+[OpenSSH's defaults](https://man.openbsd.org/ssh_config#ServerAliveCountMax).
 
-Supported by registering `ssh+tunnel` net. Example DSN:
+| Parameter | Default | Description |
+|---|---|---|
+| `ServerAliveInterval` | — (disabled) | Interval between keep-alive probes, in seconds |
+| `ServerAliveCountMax` | `3` | Unanswered probes before the connection is closed |
+| `ServerAliveTimeout` | `= ServerAliveInterval` | Timeout for a single probe. Set to the maximum latency expected in your environment. |
+| `ServerAliveLagMax` | `2s` | If elapsed time exceeds `ServerAliveTimeout + ServerAliveLagMax`, the timeout is treated as a debugger pause and skipped. |
 
-`db_user:db_pass@ssh+tunnel(ssh_user(a)example.com/tmp/my.sock?ServerAliveInterval=10)/database?param=value`
+### Connection mode
 
-Everything inside `ssh+tunnel(...)` will be passed to `dial.DialContext`.
-`(a)` symbol is a workaround for the default mysql driver DSN parser. Extra `@` breaks it.
+| Parameter | Default | Description |
+|---|---|---|
+| `ConnMux` | `true` | When `true`, a pooled SSH client multiplexes all concurrent connections to the same server over a single TCP socket. Set to `false` to open a new SSH connection per `Dial` call — increases throughput, but the remote server's concurrent-connection limit applies. If you set this to `false` you may want to call `db.SetMaxOpenConns` to match the server's limit. |
 
-### Current restrictions
+## Requirements
 
-* Supports only `~/.ssh/id_*` and password authentications. SSH_AUTH_SOCK auth is experimental
-* Requires host to be already added to `~/.ssh/known_hosts`
-* No ENV variables to customize yet
+- The SSH server host key must already be in `~/.ssh/known_hosts`.
+- Auth: `~/.ssh/id_*` private keys and SSH password are supported. `SSH_AUTH_SOCK` (agent) auth is experimental.

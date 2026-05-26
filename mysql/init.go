@@ -1,3 +1,17 @@
+// Package mysql registers an "ssh+tunnel" network type with go-mysql-driver,
+// allowing MySQL connections to be routed through an SSH tunnel.
+//
+// Import this package for its side effect:
+//
+//	import _ "github.com/TelpeNight/mytunnel/mysql"
+//
+// Then use "ssh+tunnel" as the network in your DSN. Because the MySQL DSN
+// parser treats "@" as a delimiter, use "(a)" in place of "@" inside the
+// tunnel address:
+//
+//	db_user:db_pass@ssh+tunnel(ssh_user(a)bastion.example.com/tmp/mysql.sock?ServerAliveInterval=10)/mydb
+//
+// Everything inside the parentheses is passed verbatim to [dial.DialContext].
 package mysql
 
 import (

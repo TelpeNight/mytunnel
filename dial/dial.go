@@ -18,6 +18,17 @@ import (
 
 var clientPool = newClientPool()
 
+// DialContext opens a connection to the remote address encoded in addr,
+// tunneling through the SSH server described by that address. The addr
+// format is the same as accepted by [ParseAddr].
+//
+// By default a pooled SSH client is reused for concurrent calls to the same
+// server (connection multiplexing), equivalent to a persistent tunnel. Set
+// ConnMux=false in the query string to open a fresh SSH connection per call.
+//
+// The returned [net.Conn] is ready for use. Calling Close releases the
+// connection; the underlying SSH client is closed automatically when the
+// last multiplexed connection is released.
 func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	config, err := ParseAddr(addr)
 	if err != nil {
@@ -41,12 +52,12 @@ func useConnMux(params url.Values) bool {
 		return true
 	case 1:
 	default:
-		logger().Warn("mytunne/dial: multiple values for ConnMux, ignore")
+		logger().Warn("mytunnel/dial: multiple values for ConnMux, ignore")
 		return true
 	}
 	val, err := strconv.ParseBool(vals[0])
 	if err != nil {
-		logger().Warn("mytunne/dial: invalid value for ConnMux, ignore", "err", err)
+		logger().Warn("mytunnel/dial: invalid value for ConnMux, ignore", "err", err)
 		return true
 	}
 	return val
