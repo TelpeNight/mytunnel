@@ -12,7 +12,7 @@ import (
 )
 
 func makeKeepAliveConfig(values url.Values) keepAliveConfig {
-	var result = keepAliveConfig{
+	result := keepAliveConfig{
 		serverAliveCountMax: -1,
 		serverAliveInterval: -1,
 		serverAliveTimeout:  -1,
@@ -58,8 +58,8 @@ func kaParse[Int intType](key string, vals []string, units Int) Int {
 		return -1
 	}
 	res, err := strconv.ParseUint(vals[0], 10, 64)
-	if err == nil && res > math.MaxInt {
-		err = fmt.Errorf("value %s > MaxInt", vals[0])
+	if err == nil && res > uint64(math.MaxInt/units) {
+		err = fmt.Errorf("%s will overflow", vals[0])
 	}
 	if err != nil {
 		logger().Error(fmt.Sprintf("mytunnel/dial: invalid value for %s, skipping keep alive param", key), "err", err.Error())
@@ -103,13 +103,11 @@ func keepAliveLoop(cli sshClient, config keepAliveConfig) {
 		close(waitDone)
 	}()
 
-	serverAliveCounter := config.serverAliveCountMax
+	serverTimeoutCounter := 0
 	hadTimeout := false
 	for {
-		if hadTimeout {
-			serverAliveCounter--
-		} else {
-			serverAliveCounter = config.serverAliveCountMax
+		if !hadTimeout {
+			serverTimeoutCounter = 0
 		}
 		hadTimeout = false
 
@@ -134,8 +132,11 @@ func keepAliveLoop(cli sshClient, config keepAliveConfig) {
 
 			//goland:noinspection GoDirectComparisonOfErrors
 			hadTimeout = err == errKeepAliveTimeout
-			if hadTimeout && serverAliveCounter > 0 {
-				continue
+			if hadTimeout {
+				serverTimeoutCounter++
+				if serverTimeoutCounter < config.serverAliveCountMax {
+					continue
+				}
 			}
 
 			_ = cli.Close()

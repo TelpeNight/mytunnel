@@ -133,9 +133,13 @@ func (c Config) Validate() error {
 // host:port or a bare IP address, Net is set to "tcp"; otherwise it is
 // treated as a Unix socket path and Net is set to "unix".
 //
-// The literal string "(a)" may be used anywhere in place of "@" — useful
-// when embedding the address inside a MySQL DSN, where bare "@" is a
-// delimiter.
+// When the address contains no "@", the last "(a)" token is replaced with
+// "@" — this is the escape for embedding the address in a MySQL DSN, where
+// bare "@" is a field delimiter. Earlier "(a)" tokens and any "(a)" tokens
+// in an address that already contains "@" are left as literal text.
+//
+// Passwords and usernames may contain "@" directly; the last "@" in the
+// credentials+host portion is always taken as the userinfo/host separator.
 //
 // Supported query parameters:
 //   - ServerAliveInterval — keep-alive probe interval in seconds
@@ -149,9 +153,22 @@ func ParseAddr(addr string) (Config, error) {
 		return result, nil
 	}
 
-	addr = strings.ReplaceAll(addr, "(a)", "@")
-	userinfo, url_, hasUserInfo := strings.Cut(addr, "@")
-	if !hasUserInfo {
+	// (a) substitution applies only when the address contains no real "@":
+	// the last "(a)" token becomes "@". Earlier "(a)" tokens and any "(a)"
+	// in an address that already has "@" are left as literal text.
+	if !strings.Contains(addr, "@") {
+		if i := strings.LastIndex(addr, "(a)"); i >= 0 {
+			addr = addr[:i] + "@" + addr[i+len("(a)"):]
+		}
+	}
+
+	// Split at the last "@": passwords and usernames may contain "@" freely;
+	// only the final "@" is the userinfo/host delimiter.
+	var userinfo, url_ string
+	var hasUserInfo bool
+	if i := strings.LastIndex(addr, "@"); i >= 0 {
+		userinfo, url_, hasUserInfo = addr[:i], addr[i+1:], true
+	} else {
 		url_ = addr
 	}
 

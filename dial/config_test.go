@@ -215,6 +215,103 @@ func TestParseAddr(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		// @ and : in credentials
+		{
+			name: "password with @",
+			addr: "user:p@ss@host/dest",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p@ss"),
+				Host:     "host",
+				Net:      "unix",
+				Addr:     "/dest",
+			},
+			wantErr: false,
+		},
+		{
+			name: "username with @",
+			addr: "user@dom:pass@host",
+			want: Config{
+				Username: "user@dom",
+				Password: pointer.ToString("pass"),
+				Host:     "host",
+			},
+			wantErr: false,
+		},
+		{
+			name: "multiple @ in password",
+			addr: "user:p@s@s@host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p@s@s"),
+				Host:     "host",
+			},
+			wantErr: false,
+		},
+		{
+			name: "multiple colons in password",
+			addr: "user:p:a:s:s@host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p:a:s:s"),
+				Host:     "host",
+			},
+			wantErr: false,
+		},
+		// (a) escape
+		{
+			name: "(a) escape no real @",
+			addr: "user(a)host",
+			want: Config{
+				Username: "user",
+				Host:     "host",
+			},
+			wantStr: "user@host",
+			wantErr: false,
+		},
+		{
+			name: "(a) escape with port and dest",
+			addr: "user(a)host:2222/dest",
+			want: Config{
+				Username: "user",
+				Host:     "host",
+				Port:     "2222",
+				Net:      "unix",
+				Addr:     "/dest",
+			},
+			wantStr: "user@host:2222/dest",
+			wantErr: false,
+		},
+		{
+			name: "two (a)s no real @ — last replaced",
+			addr: "user(a)dom(a)host",
+			want: Config{
+				Username: "user(a)dom",
+				Host:     "host",
+			},
+			wantStr: "user(a)dom@host",
+			wantErr: false,
+		},
+		{
+			name: "(a) literal in password — real @ present so no substitution",
+			addr: "user:pass(a)@host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("pass(a)"),
+				Host:     "host",
+			},
+			wantErr: false,
+		},
+		{
+			name: "(a) in password with real @ present — not substituted",
+			addr: "user:p(a)ss@host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p(a)ss"),
+				Host:     "host",
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
