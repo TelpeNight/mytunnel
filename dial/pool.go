@@ -198,6 +198,7 @@ func passKey(password *string) string {
 	if *password == "" {
 		return "*"
 	}
+	// MD5 avoids storing the plain-text password as a map key, narrowing the in-memory attack surface.
 	hash := md5.Sum([]byte(*password))
 	return "-*" + hex.EncodeToString(hash[:])
 }

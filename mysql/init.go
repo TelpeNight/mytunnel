@@ -12,6 +12,8 @@
 //	db_user:db_pass@ssh+tunnel(ssh_user(a)bastion.example.com/tmp/mysql.sock?ServerAliveInterval=10)/mydb
 //
 // Everything inside the parentheses is passed verbatim to [dial.DialContext].
+// When the destination address is omitted, package-level defaults match
+// go-sql-driver/mysql: 127.0.0.1:3306 for TCP and /tmp/mysql.sock for Unix.
 package mysql
 
 import (

@@ -82,6 +82,10 @@ func newClientConn(ctx context.Context, config Config, kaConfig keepAliveConfig)
 }
 
 func newMuxConn(ctx context.Context, config Config, kaConfig keepAliveConfig) (net.Conn, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, wrapErr(err)
+	}
+
 	var (
 		ka      = kaConfig.keepAlive()
 		lastErr error
@@ -98,9 +102,13 @@ func newMuxConn(ctx context.Context, config Config, kaConfig keepAliveConfig) (n
 
 		conn, err := tunn.client.DialContext(ctx, config.Net, config.Addr)
 		if err != nil {
-			// if client can't dial - it is invalid
-			// forget it and start over
-			// all other connections, multiplexed by this client, will be closed
+			if ctx.Err() != nil {
+				// context was cancelled by the caller; the SSH client may be healthy — release without destroying it
+				_ = tunn.release()
+				return nil, wrapErr(err)
+			}
+			// client failed to dial — treat it as broken
+			// forget it and start over; all connections multiplexed by this client will be closed
 			tunn.forget()
 			lastErr = err
 			continue
@@ -147,6 +155,7 @@ type muxClientConn struct {
 }
 
 func (t *muxClientConn) Close() error {
+	// Conn.Close is not Once-guarded: follows net.Conn idempotency semantics.
 	var connErr = t.Conn.Close()
 	var tunnErr error
 	t.close.Do(func() {
@@ -193,7 +202,7 @@ func newSshClient(ctx context.Context, config Config, keepAlive bool) (sshClient
 	}
 	hostKeyCallback, err := kh.New(filepath.Join(home, ".ssh/known_hosts"))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("loading known_hosts: %w", err)
 	}
 
 	var (
