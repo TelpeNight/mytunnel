@@ -41,8 +41,9 @@ db_user:db_pass@ssh+tunnel(ssh_user(a)bastion.example.com/tmp/mysql.sock?ServerA
 ```
 
 Everything inside `ssh+tunnel(...)` is the tunnel address passed to
-`dial.DialContext`. Use `(a)` in place of `@` inside the tunnel address —
-the MySQL DSN parser treats bare `@` as a delimiter.
+`dial.DialContext`. The MySQL DSN parser treats bare `@` as a field
+delimiter, so write every `@` in the tunnel address as `(a)` — see
+[Escaping in MySQL DSNs](#escaping-in-mysql-dsns).
 
 ## Address format
 
@@ -58,8 +59,6 @@ the MySQL DSN parser treats bare `@` as a delimiter.
 | `port` | SSH server port (default: `22`) |
 | `/destination` | Where to connect on the remote host. A `host:port` string or bare IP uses TCP; anything else is a Unix socket path. |
 | `?params` | Optional query parameters (see below) |
-
-`(a)` may be used in place of `@` anywhere in the address.
 
 ## Parameters
 
@@ -86,3 +85,19 @@ connections in the pool. `ServerAliveInterval` and `ServerAliveCountMax` mimic
 
 - The SSH server host key must already be in `~/.ssh/known_hosts`.
 - Auth: `~/.ssh/id_*` private keys and SSH password are supported. `SSH_AUTH_SOCK` (agent) auth is experimental.
+
+## Escaping in MySQL DSNs
+
+The MySQL DSN parser treats bare `@` as a field delimiter, so a tunnel address
+embedded in a DSN must contain no bare `@` — write every `@` as `(a)`.
+
+When the address contains no bare `@`, it is decoded greedily left-to-right:
+`(a)` becomes `@` and `((` becomes a literal `(`. So `@@` is written `(a)(a)`,
+a literal `(` is written `((`, and a literal `(a)` is written `((a)`.
+
+A single `(` that is not part of an `(a)` sequence (and not immediately
+followed by another `(`) is left untouched — only the `(a)` and `((` sequences
+are interpreted, so parens like `pass(1)` need no escaping.
+
+When the address contains a bare `@` (direct, non-DSN use), no decoding happens
+and `(` / `(a)` are literal.

@@ -133,13 +133,12 @@ func (c Config) Validate() error {
 // host:port or a bare IP address, Net is set to "tcp"; otherwise it is
 // treated as a Unix socket path and Net is set to "unix".
 //
-// When the address contains no "@", the last "(a)" token is replaced with
-// "@" — this is the escape for embedding the address in a MySQL DSN, where
-// bare "@" is a field delimiter. Earlier "(a)" tokens and any "(a)" tokens
-// in an address that already contains "@" are left as literal text.
-//
-// Passwords and usernames may contain "@" directly; the last "@" in the
-// credentials+host portion is always taken as the userinfo/host separator.
+// When the address contains no "@", it is in MySQL-DSN-escaped form and is
+// decoded greedily left-to-right: "((" becomes a literal "(", and "(a)"
+// becomes "@". This is the escape
+// for embedding the address in a MySQL DSN, where a bare "@" is a field
+// delimiter, so the embedded address must contain none. In an address that
+// already contains a bare "@", no decoding happens and "(" / "(a)" are literal.
 //
 // Supported query parameters:
 //   - ServerAliveInterval — keep-alive probe interval in seconds
@@ -153,13 +152,10 @@ func ParseAddr(addr string) (Config, error) {
 		return result, nil
 	}
 
-	// (a) substitution applies only when the address contains no real "@":
-	// the last "(a)" token becomes "@". Earlier "(a)" tokens and any "(a)"
-	// in an address that already has "@" are left as literal text.
-	if !strings.Contains(addr, "@") {
-		if i := strings.LastIndex(addr, "(a)"); i >= 0 {
-			addr = addr[:i] + "@" + addr[i+len("(a)"):]
-		}
+	// When the address has no bare "@", it is in MySQL-DSN-escaped form: decode
+	// "((" to a literal "(" and "(a)" to "@", greedy left-to-right.
+	if !strings.Contains(addr, "@") && strings.Contains(addr, "(") {
+		addr = unescapeAt(addr)
 	}
 
 	// Split at the last "@": passwords and usernames may contain "@" freely;
@@ -212,6 +208,29 @@ func pathSepAndSpace(r rune) bool {
 		return true
 	}
 	return unicode.IsSpace(r)
+}
+
+// unescapeAt decodes the "(a)" escaping used when a tunnel address is embedded
+// in a MySQL DSN, where a bare "@" would be consumed by the DSN parser. A
+// single "(a)" becomes "@"; a doubled "(a)(a)" becomes a literal "(a)".
+// Decoding is greedy and left-to-right.
+func unescapeAt(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], "(("):
+			b.WriteByte('(')
+			i += len("((")
+		case strings.HasPrefix(s[i:], "(a)"):
+			b.WriteByte('@')
+			i += len("(a)")
+		default:
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
 }
 
 func parseUserInfo(userinfo string) (string, *string) {

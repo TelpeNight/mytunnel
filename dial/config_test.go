@@ -283,13 +283,79 @@ func TestParseAddr(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "two (a)s no real @ — last replaced",
+			name: "two (a)s no real @ — all decoded",
 			addr: "user(a)dom(a)host",
 			want: Config{
-				Username: "user(a)dom",
+				Username: "user@dom",
 				Host:     "host",
 			},
-			wantStr: "user(a)dom@host",
+			wantStr: "user@dom@host",
+			wantErr: false,
+		},
+		{
+			name: "password @ via (a)",
+			addr: "user:p(a)ss(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p@ss"),
+				Host:     "host",
+			},
+			wantStr: "user:p@ss@host",
+			wantErr: false,
+		},
+		{
+			name: "double @ in password via (a)",
+			addr: "user:p(a)(a)ss(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p@@ss"),
+				Host:     "host",
+			},
+			wantStr: "user:p@@ss@host",
+			wantErr: false,
+		},
+		{
+			name: "literal (a) in password via ((",
+			addr: "user:p((a)ss(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p(a)ss"),
+				Host:     "host",
+			},
+			wantStr: "user:p(a)ss@host",
+			wantErr: false,
+		},
+		{
+			name: "literal ( in password via ((",
+			addr: "user:p((q(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("p(q"),
+				Host:     "host",
+			},
+			wantStr: "user:p(q@host",
+			wantErr: false,
+		},
+		{
+			name: "lone ( not part of (a) needs no escaping",
+			addr: "user:pass(1)(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("pass(1)"),
+				Host:     "host",
+			},
+			wantStr: "user:pass(1)@host",
+			wantErr: false,
+		},
+		{
+			name: "literal (a) password only",
+			addr: "user:((a)(a)host",
+			want: Config{
+				Username: "user",
+				Password: pointer.ToString("(a)"),
+				Host:     "host",
+			},
+			wantStr: "user:(a)@host",
 			wantErr: false,
 		},
 		{
