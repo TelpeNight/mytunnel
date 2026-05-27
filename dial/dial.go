@@ -35,7 +35,7 @@ func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = config.canDial(); err != nil {
+	if err = config.Validate(); err != nil {
 		return nil, wrapErr(err)
 	}
 
@@ -124,20 +124,6 @@ func newMuxConn(ctx context.Context, config Config, kaConfig keepAliveConfig) (n
 		return &muxClientConn{Conn: conn, tunn: tunn}, nil
 	}
 	return nil, wrapErr(lastErr)
-}
-
-func (c Config) canDial() error {
-	var errs []error
-	if c.Username == "" {
-		errs = append(errs, ErrUserRequired)
-	}
-	if c.Host == "" {
-		errs = append(errs, ErrHostRequired)
-	}
-	if c.Net == "" || c.Addr == "" {
-		errs = append(errs, ErrAddrRequired)
-	}
-	return errors.Join(errs...)
 }
 
 type clientConn struct {

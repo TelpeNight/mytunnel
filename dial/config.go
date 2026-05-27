@@ -14,14 +14,25 @@ import (
 
 // Config holds the parsed parameters for an SSH tunnel connection.
 // Use [ParseAddr] to construct a Config from an address string.
+//
+// Field values are stored exactly as provided by the caller — no normalisation
+// is applied. For example, Host may be a plain hostname, an IPv4 address, or
+// a bracketed IPv6 literal such as "[::1]", whichever form appeared in the
+// address string. [Config.Validate] checks that the fields required for a
+// successful dial are present; everything else (port validity, host
+// resolvability, …) is left to the underlying network stack.
 type Config struct {
 	// Username is the SSH login name.
 	Username string
 	// Password is the SSH password. If nil, only public-key auth is attempted.
 	Password *string
-	// Host is the SSH server hostname or IP address.
+	// Host is the SSH server hostname or IP address, stored as provided.
+	// An IPv6 literal may or may not include surrounding brackets depending
+	// on whether the caller included them.
 	Host string
-	// Port is the SSH server port. Empty means [DefaultPort] (22).
+	// Port is the SSH server port as a string, stored as provided.
+	// Empty means [DefaultPort] (22). Any non-numeric value is passed through
+	// and will produce an error at dial time.
 	Port string
 	// Net is the network type of the destination ("tcp" or "unix").
 	Net string
@@ -32,9 +43,13 @@ type Config struct {
 	Params url.Values
 }
 
-// DefaultPort is the SSH port used when [Config.Port] is zero.
+// DefaultPort is the SSH port used when [Config.Port] is empty.
 const DefaultPort = "22"
 
+// String serialises the config back into an address string accepted by [ParseAddr].
+// The only transformation applied is bracketing a bare IPv6 host when a port is
+// also present — without brackets the colon would be ambiguous as a port separator.
+// All other field values are written exactly as stored.
 func (c Config) String() string {
 	var builder = make([]string, 0, 11)
 	if c.Username != "" {
@@ -70,19 +85,49 @@ func (c Config) String() string {
 }
 
 var (
-	// ErrUserRequired is returned by [ParseAddr] when no username is present.
+	// ErrUserRequired is returned by [Config.Validate] when Username is empty.
 	ErrUserRequired = errors.New("username is required")
-	// ErrHostRequired is returned by [ParseAddr] when no host is present.
+	// ErrHostRequired is returned by [Config.Validate] when Host is empty.
 	ErrHostRequired = errors.New("host is required")
-	// ErrAddrRequired is returned by [ParseAddr] when no destination address is present.
+	// ErrAddrRequired is returned by [Config.Validate] when Net or Addr is empty.
 	ErrAddrRequired = errors.New("addr is required")
 )
+
+// Validate checks that the fields required for a correct dial and SSH
+// authentication are present: Username, Host, and the destination Net+Addr.
+// It does not validate field values — port format, host resolvability, and
+// similar concerns are left to the underlying dialer and SSH library, which
+// will produce actionable errors if anything is wrong.
+//
+// [DialContext] calls Validate automatically. Call it explicitly when
+// constructing a [Config] by hand rather than via [ParseAddr].
+func (c Config) Validate() error {
+	var errs []error
+	if c.Username == "" {
+		errs = append(errs, ErrUserRequired)
+	}
+	if c.Host == "" {
+		errs = append(errs, ErrHostRequired)
+	}
+	if c.Net == "" || c.Addr == "" {
+		errs = append(errs, ErrAddrRequired)
+	}
+	return errors.Join(errs...)
+}
 
 // ParseAddr parses an SSH tunnel address string into a [Config].
 //
 // The address format is:
 //
 //	[username[:password]@]host[:port][/destination][?params]
+//
+// Parsing is purely structural: each token is split out and stored as-is,
+// without validating its value. Use [Config.Validate] to check that the result
+// is complete enough to dial. Malformed values (bad port, unresolvable host,
+// …) are not rejected here — they will produce errors at dial time.
+//
+// The only error ParseAddr returns is a malformed query string in the params
+// component.
 //
 // The destination component is resolved as follows: if it looks like
 // host:port or a bare IP address, Net is set to "tcp"; otherwise it is
@@ -112,23 +157,12 @@ func ParseAddr(addr string) (Config, error) {
 
 	var errs []error
 	if hasUserInfo {
-		if url_ == "" {
-			errs = append(errs, ErrHostRequired)
-		}
-		var userInfoErr error
-		result.Username, result.Password, userInfoErr = parseUserInfo(userinfo)
-		if userInfoErr != nil {
-			errs = append(errs, userInfoErr)
-		}
+		result.Username, result.Password = parseUserInfo(userinfo)
 	}
 
 	hostPort, netAddrWithParams, hasSlash := strings.Cut(url_, "/")
 	if hostPort != "" {
-		var hostPortErr error
-		result.Host, result.Port, hostPortErr = parseHostPort(hostPort)
-		if hostPortErr != nil {
-			errs = append(errs, hostPortErr)
-		}
+		result.Host, result.Port = parseHostPort(hostPort)
 	}
 
 	if hasSlash {
@@ -139,9 +173,7 @@ func ParseAddr(addr string) (Config, error) {
 			netAddr, params = netAddrWithParams[:paramStart], netAddrWithParams[paramStart+1:]
 		}
 
-		if strings.TrimFunc(netAddr, pathSepAndSpace) == "" {
-			errs = append(errs, ErrAddrRequired)
-		} else {
+		if strings.TrimFunc(netAddr, pathSepAndSpace) != "" {
 			result.Net, result.Addr = getAddrNet(netAddr)
 		}
 
@@ -165,30 +197,30 @@ func pathSepAndSpace(r rune) bool {
 	return unicode.IsSpace(r)
 }
 
-func parseUserInfo(userinfo string) (string, *string, error) {
+func parseUserInfo(userinfo string) (string, *string) {
 	if userinfo == "" {
-		return "", nil, ErrUserRequired
+		return "", nil
 	}
 	username, password, has := strings.Cut(userinfo, ":")
 	if has {
-		return username, &password, nil
+		return username, &password
 	}
-	return username, nil, nil
+	return username, nil
 }
 
-func parseHostPort(host string) (string, string, error) {
+// parseHostPort splits a "host" or "host:port" token.
+// It uses net.SplitHostPort to detect whether a port is present, then
+// substrings the original input so the host token is preserved exactly
+// (e.g. "[::1]:22" yields host "[::1]", not the stripped "::1").
+// If no port separator is found the whole input is returned as the host.
+func parseHostPort(host string) (string, string) {
 	_, port, err := net.SplitHostPort(host)
 	if err != nil {
-		return host, "", nil
+		return host, ""
 	}
-	// Derive host by stripping the ":port" suffix from the original string,
-	// preserving whatever form the caller used (e.g. "[::1]" stays "[::1]").
 	h := strings.TrimSuffix(host, port)
 	h = strings.TrimSuffix(h, ":")
-	if h == "" {
-		return h, port, ErrHostRequired
-	}
-	return h, port, nil
+	return h, port
 }
 
 func getAddrNet(addr string) (string, string) {

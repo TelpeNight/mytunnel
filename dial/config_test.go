@@ -1,6 +1,7 @@
 package dial
 
 import (
+	"cmp"
 	"reflect"
 	"testing"
 
@@ -12,6 +13,7 @@ func TestParseAddr(t *testing.T) {
 		name    string
 		addr    string
 		want    Config
+		wantStr string
 		wantErr bool
 	}{
 		{
@@ -34,7 +36,8 @@ func TestParseAddr(t *testing.T) {
 			want: Config{
 				Host: "host",
 			},
-			wantErr: true,
+			wantStr: "host",
+			wantErr: false,
 		},
 		{
 			name: "@ suffix",
@@ -42,7 +45,7 @@ func TestParseAddr(t *testing.T) {
 			want: Config{
 				Username: "user",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "user host",
@@ -111,7 +114,8 @@ func TestParseAddr(t *testing.T) {
 				Password: pointer.ToString("pass"),
 				Host:     "host",
 			},
-			wantErr: true,
+			wantStr: "user:pass@host",
+			wantErr: false,
 		},
 		{
 			name: "host port addr",
@@ -139,7 +143,7 @@ func TestParseAddr(t *testing.T) {
 			want: Config{
 				Port: "33",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "tcp",
@@ -223,8 +227,9 @@ func TestParseAddr(t *testing.T) {
 				t.Errorf("ParseAddr() got = %v, want %v", got, tt.want)
 			}
 			if err == nil {
-				if tt.addr != got.String() {
-					t.Errorf("Config.String() = %v, want %v", got.String(), tt.addr)
+				want := cmp.Or(tt.wantStr, tt.addr)
+				if want != got.String() {
+					t.Errorf("Config.String() = %v, want %v", got.String(), want)
 				}
 			}
 		})
