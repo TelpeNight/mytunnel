@@ -191,15 +191,10 @@ func parseHostPort(host string) (string, int, error) {
 }
 
 func getAddrNet(addr string) (string, string) {
-	host, _, errHostPort := net.SplitHostPort(addr)
-	if errHostPort == nil {
-		_, errIpAddr := netip.ParseAddr(host)
-		if errIpAddr == nil {
-			return "tcp", addr
-		}
+	if _, _, err := net.SplitHostPort(addr); err == nil {
+		return "tcp", addr
 	}
-	_, errIpAddr := netip.ParseAddr(addr)
-	if errIpAddr == nil {
+	if _, err := netip.ParseAddr(addr); err == nil {
 		return "tcp", addr
 	}
 	return "unix", "/" + addr

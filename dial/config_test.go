@@ -149,6 +149,33 @@ func TestParseAddr(t *testing.T) {
 			},
 			wantErr: false,
 		},
+		{
+			name: "tcp hostname",
+			addr: "/mysql-server:3306",
+			want: Config{
+				Net:  "tcp",
+				Addr: "mysql-server:3306",
+			},
+			wantErr: false,
+		},
+		{
+			name: "tcp ipv6",
+			addr: "/::1",
+			want: Config{
+				Net:  "tcp",
+				Addr: "::1",
+			},
+			wantErr: false,
+		},
+		{
+			name: "tcp ipv6 port",
+			addr: "/[::1]:3306",
+			want: Config{
+				Net:  "tcp",
+				Addr: "[::1]:3306",
+			},
+			wantErr: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
