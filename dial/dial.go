@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -231,11 +232,18 @@ func newSshClient(ctx context.Context, config Config, keepAlive bool) (sshClient
 }
 
 func (c Config) sshAddr() string {
+	host := c.Host
 	port := c.Port
-	if port == 0 {
+	if port == "" {
 		port = DefaultPort
 	}
-	return fmt.Sprintf("%s:%d", c.Host, port)
+
+	// We assume that host is a literal IPv6 address if host has
+	// colons.
+	if !strings.HasPrefix(host, "[") && strings.Contains(host, ":") {
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
 }
 
 func sshDialCtx(ctx context.Context, addr string, config *ssh.ClientConfig, keepAlive bool) (*sshClientConn, error) {

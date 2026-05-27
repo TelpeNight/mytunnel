@@ -5,11 +5,9 @@ package dial
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -23,8 +21,8 @@ type Config struct {
 	Password *string
 	// Host is the SSH server hostname or IP address.
 	Host string
-	// Port is the SSH server port. Zero means [DefaultPort] (22).
-	Port int
+	// Port is the SSH server port. Empty means [DefaultPort] (22).
+	Port string
 	// Net is the network type of the destination ("tcp" or "unix").
 	Net string
 	// Addr is the address of the destination on the remote host.
@@ -35,7 +33,7 @@ type Config struct {
 }
 
 // DefaultPort is the SSH port used when [Config.Port] is zero.
-const DefaultPort = 22
+const DefaultPort = "22"
 
 func (c Config) String() string {
 	var builder = make([]string, 0, 11)
@@ -48,9 +46,15 @@ func (c Config) String() string {
 	if len(builder) > 0 {
 		builder = append(builder, "@")
 	}
-	builder = append(builder, c.Host)
-	if c.Port != 0 {
-		builder = append(builder, ":", strconv.Itoa(c.Port))
+	host := c.Host
+	wrapIPv6 := c.Port != "" && strings.Contains(host, ":") && !strings.HasPrefix(host, "[")
+	if wrapIPv6 {
+		builder = append(builder, "[", host, "]")
+	} else {
+		builder = append(builder, host)
+	}
+	if c.Port != "" {
+		builder = append(builder, ":", c.Port)
 	}
 	if c.Addr != "" {
 		if c.Addr[0] != '/' {
@@ -172,22 +176,19 @@ func parseUserInfo(userinfo string) (string, *string, error) {
 	return username, nil, nil
 }
 
-func parseHostPort(host string) (string, int, error) {
-	portIndex := strings.LastIndex(host, ":")
-	if portIndex == -1 {
-		return host, 0, nil
-	} else {
-		portStr := host[portIndex+1:]
-		port, err := strconv.Atoi(portStr)
-		if err != nil {
-			return host, 0, fmt.Errorf("invalid port %q: %w", portStr, err)
-		}
-		host = host[:portIndex]
-		if host == "" {
-			return host, port, ErrHostRequired
-		}
-		return host, port, nil
+func parseHostPort(host string) (string, string, error) {
+	_, port, err := net.SplitHostPort(host)
+	if err != nil {
+		return host, "", nil
 	}
+	// Derive host by stripping the ":port" suffix from the original string,
+	// preserving whatever form the caller used (e.g. "[::1]" stays "[::1]").
+	h := strings.TrimSuffix(host, port)
+	h = strings.TrimSuffix(h, ":")
+	if h == "" {
+		return h, port, ErrHostRequired
+	}
+	return h, port, nil
 }
 
 func getAddrNet(addr string) (string, string) {

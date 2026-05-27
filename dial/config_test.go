@@ -118,7 +118,7 @@ func TestParseAddr(t *testing.T) {
 			addr: "host:23/addr",
 			want: Config{
 				Host: "host",
-				Port: 23,
+				Port: "23",
 				Net:  "unix",
 				Addr: "/addr",
 			},
@@ -128,15 +128,16 @@ func TestParseAddr(t *testing.T) {
 			name: "invalid port",
 			addr: "host:3a",
 			want: Config{
-				Host: "host:3a",
+				Host: "host",
+				Port: "3a",
 			},
-			wantErr: true,
+			wantErr: false,
 		},
 		{
 			name: "only port",
 			addr: ":33",
 			want: Config{
-				Port: 33,
+				Port: "33",
 			},
 			wantErr: true,
 		},
@@ -173,6 +174,40 @@ func TestParseAddr(t *testing.T) {
 			want: Config{
 				Net:  "tcp",
 				Addr: "[::1]:3306",
+			},
+			wantErr: false,
+		},
+		{
+			name: "ssh host ipv6 default port",
+			addr: "user@[::1]/my.sock",
+			want: Config{
+				Username: "user",
+				Host:     "[::1]",
+				Net:      "unix",
+				Addr:     "/my.sock",
+			},
+			wantErr: false,
+		},
+		{
+			name: "ssh host ipv6 explicit port",
+			addr: "user@[::1]:2222/my.sock",
+			want: Config{
+				Username: "user",
+				Host:     "[::1]",
+				Port:     "2222",
+				Net:      "unix",
+				Addr:     "/my.sock",
+			},
+			wantErr: false,
+		},
+		{
+			name: "ssh host bare ipv6 default port",
+			addr: "user@::1/my.sock",
+			want: Config{
+				Username: "user",
+				Host:     "::1",
+				Net:      "unix",
+				Addr:     "/my.sock",
 			},
 			wantErr: false,
 		},
